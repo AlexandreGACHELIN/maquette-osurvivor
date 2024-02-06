@@ -27,7 +27,7 @@ export class Preloader extends Scene {
       frameHeight: 128,
     });
 
-    this.load.spritesheet('enemy', 'enemy/Zombie-Walk.png', {
+    this.load.spritesheet('Zombie-Walk', 'enemy/Zombie-Walk.png', {
       frameWidth: 96,
       frameHeight: 96,
     });
