@@ -1,55 +1,59 @@
+import Phaser from "phaser";
+
 export class Enemy extends Phaser.Physics.Arcade.Sprite {
-  constructor(scene, x, y, texture) {
-    super(scene, x, y, texture);
+    constructor(scene, x, y, texture) {
+        super(scene, x, y, texture);
 
-    scene.add.existing(this);
-    scene.physics.add.existing(this);
+        scene.add.existing(this);
+        scene.physics.add.existing(this);
 
-    // Définir ici les animations spécifiques à l'ennemi
-    this.anims.create({
-      key: 'Zombie-Walk',
-      frames: this.anims.generateFrameNumbers('Zombie-Walk', { start: 0, end: 7 }),
-      frameRate: 10,
-      repeat: -1
-    });
+        this.health = 50;
+        this.maxHealth = 50;
+        this.attackRange = 10;
+        this.attackDamage = 5;
+        this.attackCooldown = 5000;
+        this.lastAttackTime = 0;
+        this.speed = 100; 
 
-    // Démarrer l'animation de base
-    this.play('Zombie-Walk');
+        this.anims.create({
+            key: "Zombie-Walk",
+            frames: this.anims.generateFrameNumbers("Zombie-Walk", { start: 0, end: 7 }),
+            frameRate: 10,
+            repeat: -1,
+        });
 
-    // Variable pour suivre la direction de marche
-    this._isWalkingLeft = false;
-    this.flipX = this._isWalkingLeft; // Définissez la première orientation de l'image
-  }
-
-  // Propriété pour accéder à _isWalkingLeft depuis l'extérieur
-  get isWalkingLeft() {
-    return this._isWalkingLeft;
-  }
-
-  set isWalkingLeft(value) {
-    this._isWalkingLeft = value;
-    this.flipX = value; // Mettez à jour la propriété flipX en même temps
-  }
-
-  // Méthode pour mettre à jour l'animation en fonction de la direction de marche
-  updateAnimation(velocityX) {
-    if (velocityX < 0) {
-      // L'ennemi se déplace vers la gauche
-      this.isWalkingLeft = true;
-    } else if (velocityX > 0) {
-      // L'ennemi se déplace vers la droite
-      this.isWalkingLeft = false;
+        this.play("Zombie-Walk");
+        
+        this.setCollideWorldBounds(true);
     }
-  }
 
-  // Méthode pour mettre à jour l'ennemi
-  update(time, delta) {
-    // ... Autres mises à jour
+    update(time, delta) {
+        if (!this.scene || !this.scene.player) return;
 
-    // Calculez la vitesse horizontale de l'ennemi, par exemple, à partir de son corps physique
-    const velocityX = 0; // Assurez-vous de calculer correctement cette valeur
+        const player = this.scene.player;
+        const direction = player.x - this.x;
+        this.flipX = direction < 0;
 
-    // Appelez la méthode updateAnimation() sur l'ennemi
-    this.updateAnimation(velocityX);
-  }
+        const distanceToPlayer = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
+
+        // Simplifiez la logique en vérifiant une seule fois si l'ennemi peut attaquer
+        if (distanceToPlayer < this.attackRange && time > this.lastAttackTime + this.attackCooldown) {
+            this.attackPlayer();
+            this.lastAttackTime = time;
+        } else if (distanceToPlayer >= this.attackRange) {
+            // Se déplacer vers le joueur si hors de portée d'attaque
+            this.scene.physics.moveToObject(this, player, this.speed);
+        }
+    }
+
+    attackPlayer() {
+        this.scene.playerTakeDamage(this.attackDamage);
+    }
+
+    takeDamage(damage) {
+        this.health -= damage;
+        if (this.health <= 0) {
+            this.destroy();
+        }
+    }
 }

@@ -4,41 +4,45 @@ import { Enemy } from "./Enemy";
 export class Game extends Scene {
   constructor() {
     super("Game");
-    this.lastAttackTime = 0; // Temps de la dernière attaque
-    this.attackCooldown = 2000; // Cooldown en millisecondes (2 secondes dans cet exemple)
-
-    this.player = {};
+    this.lastAttackTime = 0;
+    this.attackCooldown = 5000;
+    this.gamePaused = false;
+    this.playerHealth = 100; // Santé initiale du joueur
+    this.playerMaxHealth = 100; // Santé maximale du joueur
+    this.currentPlayerAnimation = "";
+    this.currentEnemyAnimations = [];
+    this.playerDamage = 50; // Dégâts initiaux du joueur
+    this.playerSpeed = 250; // Vitesse de déplacement du joueur (à ajuster selon vos besoins)
   }
 
   preload() {
-    // CHARGEMENT DES TOUCHES DU CLAVIER
     this.cursors = this.input.keyboard.createCursorKeys();
   }
 
   create() {
-    //CHARGEMENT DE LA MAP
+    
+    //Création map avec les tuiles
     this.map = this.make.tilemap({ key: "survivor" });
-    this.tileset1 = this.map.addTilesetImage("grass", "grass");
-    this.tileset2 = this.map.addTilesetImage("plant", "plant");
-    this.tileset3 = this.map.addTilesetImage("props", "props");
-    this.tileset4 = this.map.addTilesetImage("wall", "wall");
+    const tileset1 = this.map.addTilesetImage("grass", "grass");
+    const tileset2 = this.map.addTilesetImage("plant", "plant");
+    const tileset3 = this.map.addTilesetImage("props", "props");
+    const tileset4 = this.map.addTilesetImage("wall", "wall");
 
-    this.groundLayer = this.map.createLayer("ground", this.tileset1);
-    this.topLayer = this.map.createLayer("top", [
-      this.tileset2,
-      this.tileset3,
-      this.tileset4,
-    ]);
+    this.map.createLayer("ground", tileset1);
+    this.map.createLayer("top", [tileset2, tileset3, tileset4]);
 
-    //CHARGEMENT DU PLAYER
+    //Création Perso Jouable
     this.player = this.physics.add.sprite(959 / 2, 640 / 2, "raiderWalk");
     this.player.body.setSize(this.player.width * 0.3, this.player.height * 0.5);
     this.player.body.setOffset(40, 60);
+    this.player.setCollideWorldBounds(true);
+    this.player.setImmovable(true);
 
-    this.physics.add.existing(this.player);
-    this.player.body.setCollideWorldBounds(true);
+    //Barre de vie
+    this.healthBar = this.add.graphics();
+    this.updateHealthBar();
 
-    //ANIMATIONS DU PLAYER
+    //Animations Player
     this.anims.create({
       key: "walk-side",
       frames: this.anims.generateFrameNumbers("raiderWalk", {
@@ -59,105 +63,218 @@ export class Game extends Scene {
       repeat: -1,
     });
 
-    // CREATION D'UN GROUPE POUR LES ENNEMIS
-    this.enemies = this.physics.add.group();
+    //Ajout des Enemis dans un groupe
+    this.enemies = this.physics.add.group({
+      classType: Enemy, // Important pour instantier correctement les ennemis
+    });
 
-    //BOUCLE DE SPAWN D'ENNEMIS
-    this.time.addEvent({
+    //Boucle à utiliser pour le spawn enemy
+    this.spawnEvent = this.time.addEvent({
       delay: 5000,
-      callback: () => this.spawnEnemies(),
+      callback: this.spawnEnemies,
       callbackScope: this,
       loop: true,
     });
 
-    //LA CAMERA SUIT LE PLAYER
+    //La caméra suit Player
     this.cameras.main.startFollow(this.player, true);
 
-    // GESTION COLLISIONS
-    this.physics.add.overlap(
+    // Utilisation de collider pour les interactions entre le joueur et les ennemis
+    this.physics.add.collider(
       this.player,
       this.enemies,
-      this.playerHit,
+      this.handlePlayerEnemyCollision,
       null,
       this
     );
+
+    this.input.keyboard.on("keydown-ESC", () => {
+      this.gamePaused = !this.gamePaused;
+      if (this.gamePaused) {
+        this.pauseGame();
+      } else {
+        this.resumeGame();
+      }
+    });
   }
 
   update(time, delta) {
-    const speed = 100;
+    if (this.gamePaused) return;
+
+    this.handlePlayerMovement(delta);
+
+    // Nouvelle méthode pour gérer l'attaque automatique éclair
+    this.handleAutoAttack(time);
+
+    this.updateHealthBar(); // Assurez-vous que la barre de vie est correctement positionnée et à jour
+
+    this.updateHealthBarPosition();
+    console.log('FPS', this.game.loop.actualFps);
+    // Mettre à jour chaque ennemi
+    this.enemies.children.iterate((enemy) => {
+      if (enemy) enemy.update(time, delta);
+    });
+  }
+  //Mapping du Player
+  handlePlayerMovement(delta) {
+    const speed = this.playerSpeed;
     let velocityX = 0;
     let velocityY = 0;
 
-    this.player.setVelocity(0, 0);
+    // Réinitialise la vitesse du joueur à chaque frame
+    this.player.setVelocity(0);
 
-    if (this.cursors.left.isDown || this.input.keyboard.addKey("A").isDown) {
-      velocityX = -speed; // Move left
-      this.player.scaleX = -1; // Flip sprite horizontally
-      this.player.body.offset.x = 80;
-    }
-    if (this.cursors.right.isDown || this.input.keyboard.addKey("D").isDown) {
-      velocityX = speed; // Move right
-      this.player.scaleX = 1; // Reset sprite flip
+    // Gère les entrées du clavier pour le mouvement horizontal
+    if (this.cursors.left.isDown || this.input.keyboard.addKey("Q").isDown) {
+      velocityX = -speed;
+      this.player.scaleX = -1; // Retourne le sprite pour le mouvement vers la gauche
+      this.player.body.offset.x = 80; // Ajuste le décalage si nécessaire
+    } else if (
+      this.cursors.right.isDown ||
+      this.input.keyboard.addKey("D").isDown
+    ) {
+      velocityX = speed;
+      this.player.scaleX = 1;
       this.player.body.offset.x = 40;
     }
-    if (this.cursors.up.isDown || this.input.keyboard.addKey("W").isDown) {
-      velocityY = -speed; // Move up
-    }
-    if (this.cursors.down.isDown || this.input.keyboard.addKey("S").isDown) {
-      velocityY = speed; // Move down
+
+    // Gère les entrées du clavier pour le mouvement vertical
+    if (this.cursors.up.isDown || this.input.keyboard.addKey("Z").isDown) {
+      velocityY = -speed;
+    } else if (
+      this.cursors.down.isDown ||
+      this.input.keyboard.addKey("S").isDown
+    ) {
+      velocityY = speed;
     }
 
-    // Handle diagonal movement
-    if (
-      (this.cursors.left.isDown || this.input.keyboard.addKey("A").isDown) &&
-      (this.cursors.up.isDown || this.input.keyboard.addKey("W").isDown)
-    ) {
-      velocityX *= Math.cos(Math.PI / 4);
-      velocityY *= Math.sin(Math.PI / 4);
-    }
-    if (
-      (this.cursors.right.isDown || this.input.keyboard.addKey("D").isDown) &&
-      (this.cursors.up.isDown || this.input.keyboard.addKey("W").isDown)
-    ) {
-      velocityX *= Math.cos(Math.PI / 4);
-      velocityY *= Math.sin(Math.PI / 4);
-    }
-    if (
-      (this.cursors.left.isDown || this.input.keyboard.addKey("A").isDown) &&
-      (this.cursors.down.isDown || this.input.keyboard.addKey("S").isDown)
-    ) {
-      velocityX *= Math.cos(Math.PI / 4);
-      velocityY *= Math.sin(Math.PI / 4);
-    }
-    if (
-      (this.cursors.right.isDown || this.input.keyboard.addKey("D").isDown) &&
-      (this.cursors.down.isDown || this.input.keyboard.addKey("S").isDown)
-    ) {
-      velocityX *= Math.cos(Math.PI / 4);
-      velocityY *= Math.sin(Math.PI / 4);
-    }
-
-    // Apply velocity
+    // Applique la vitesse calculée au joueur
     this.player.setVelocity(velocityX, velocityY);
 
-    // Play animation
+    // Joue l'animation appropriée en fonction du mouvement
     if (velocityX !== 0 || velocityY !== 0) {
       this.player.anims.play("walk-side", true);
     } else {
       this.player.anims.play("idle", true);
     }
+  }
 
-    //SELECTIONNE TOUS LES ENNEMIS DU GROUPE ET LES FONT PARTIR VERS THIS.PLAYER
-    this.enemies.children.each((enemy) => {
-      // Ici, vous ajustez la vitesse des ennemis vers le joueur
-      this.physics.moveToObject(enemy, this.player, 50); // 100 est la vitesse
-    }, this);
+  //Comportement Collisions Player/Enemy
+  handlePlayerEnemyCollision(player, enemy) {
+    // Optionnellement, appliquez une petite animation ou un effet visuel pour indiquer la collision
+    enemy.setTint(0xff0000); // Change temporairement la couleur de l'ennemi pour rouge
+    this.time.delayedCall(500, () => {
+      enemy.clearTint(); // Retire la teinte après un court délai
+    });
 
-    //TRACKING DE LA PORTEE
+    // Ici, vous pouvez également infliger des dégâts au joueur ou à l'ennemi si nécessaire
+    // this.playerTakeDamage(10); // Exemple d'infliger des dégâts au joueur
+  }
+
+  // Méthode pour régler les dégâts du joueur en jeu
+  setPlayerDamage(damage) {
+    this.playerDamage = damage;
+  }
+  // Réglage du spawn d'enemys
+  spawnEnemies() {
+    const nombreEnnemis = Phaser.Math.Between(1, 5);
+    for (let i = 0; i < nombreEnnemis; i++) {
+      const x = Phaser.Math.Between(0, this.scale.width);
+      const y = Phaser.Math.Between(0, this.scale.height);
+      const enemy = new Enemy(this, x, y, "enemy");
+      this.enemies.add(enemy);
+    }
+  }
+  //Animation éclair pour attaque Player
+  createLightningEffect(x1, y1, x2, y2) {
+    let graphics = this.add.graphics({
+      lineStyle: { width: 2, color: 0xffff00 },
+    });
+    graphics.lineBetween(x1, y1, x2, y2);
+    this.time.delayedCall(100, () => graphics.clear());
+  }
+  //Attaque auto Player vers Enemy + conditions mort Enemy
+  attackClosestEnemy(closestEnemy) {
+    closestEnemy.takeDamage(this.playerDamage);
+    if (closestEnemy.health <= 0) {
+      // Si la santé de l'ennemi est à 0 ou moins après avoir subi des dégâts, alors le détruire
+      this.createLightningEffect(
+        this.player.x,
+        this.player.y,
+        closestEnemy.x,
+        closestEnemy.y
+      );
+      closestEnemy.destroy();
+      this.lastAttackTime = this.time.now; // Utilisez this.time.now pour Phaser 3
+    }
+  }
+  //Réglage Mode Pause
+  pauseGame() {
+    if (this.spawnEvent) this.spawnEvent.paused = true;
+    this.physics.pause();
+    this.player.anims.pause();
+    this.currentEnemyAnimations = []; // Réinitialise le tableau pour les animations ennemies
+    this.enemies.getChildren().forEach((enemy) => {
+      if (enemy.anims.isPlaying) {
+        // Stocke directement l'objet ennemi et l'état de son animation
+        this.currentEnemyAnimations.push({
+          enemy: enemy,
+          animKey: enemy.anims.currentAnim.key,
+        });
+        enemy.anims.stop();
+      }
+    });
+  }
+  //Réglage Mode Resume
+  resumeGame() {
+    if (this.spawnEvent) this.spawnEvent.paused = false;
+    this.physics.resume();
+    if (this.currentPlayerAnimation) {
+      this.player.anims.play(this.currentPlayerAnimation, true);
+    }
+    // Reprise des animations pour chaque ennemi stocké
+    this.currentEnemyAnimations.forEach(({ enemy, animKey }) => {
+      if (enemy && enemy.anims) {
+        enemy.anims.play(animKey, true);
+      }
+    });
+    this.currentEnemyAnimations = []; // Nettoie le tableau après la reprise
+  }
+  //MàJ Barre de Vie
+  updateHealthBar() {
+    this.healthBar.clear();
+    let x = this.player.x - 20;
+    let y = this.player.y - 40;
+
+    // Fond de la barre de vie
+    this.healthBar.fillStyle(0x808080);
+    this.healthBar.fillRect(x, y, 40, 5);
+
+    // Barre de santé actuelle
+    this.healthBar.fillStyle(0x00ff00);
+    let healthWidth = 40 * (this.playerHealth / this.playerMaxHealth);
+    this.healthBar.fillRect(x, y, healthWidth, 5);
+  }
+  //MàJ Position Barre de vie
+  updateHealthBarPosition() {
+    // Met à jour simplement la position de la barre de vie sans redessiner
+    this.updateHealthBar(); // Redessine la barre de vie avec sa nouvelle position et valeur de santé
+  }
+
+  playerTakeDamage(amount) {
+    this.playerHealth -= amount;
+    if (this.playerHealth < 0) {
+      this.playerHealth = 0;
+    }
+    this.updateHealthBar();
+    // Ajouter un console.log pour afficher la valeur de playerHealth
+    console.log("Player Health:", this.playerHealth);
+  }
+  handleAutoAttack(time) {
+    // Trouver l'ennemi le plus proche et sa distance
     let closestEnemy = null;
     let closestDistance = Infinity;
 
-    // Parcourir tous les ennemis pour trouver le plus proche du joueur
     this.enemies.children.each((enemy) => {
       const distance = Phaser.Math.Distance.Between(
         this.player.x,
@@ -165,98 +282,26 @@ export class Game extends Scene {
         enemy.x,
         enemy.y
       );
-
       if (distance < closestDistance) {
         closestDistance = distance;
         closestEnemy = enemy;
       }
     });
-    // Logique de tracking et d'attaque...
-    if (closestEnemy && closestDistance < 100) {
-      // Vérifier si le cooldown est passé
-      if (time > this.lastAttackTime + this.attackCooldown) {
-        console.log("Ennemi à portée d'attaque !");
-        this.attackClosestEnemy(closestEnemy);
-        this.createLightningEffect(
-          this.player.x,
-          this.player.y,
-          closestEnemy.x,
-          closestEnemy.y
-        );
-        closestEnemy.destroy(); // Ou appliquer des dégâts à l'ennemi
 
-        // Mettre à jour le temps de la dernière attaque
-        this.lastAttackTime = time;
-      }
-    }
-  }
-  spawnEnemies() {
-    const nombreEnnemis = Phaser.Math.Between(1, 5);
-    for (let i = 0; i < nombreEnnemis; i++) {
-      const x = Phaser.Math.Between(0, this.scale.width);
-      const y = Phaser.Math.Between(0, this.scale.height);
-      // Assuming Enemy is correctly set up to handle this construction.
-      const enemy = new Enemy(this, x, y);
-      this.enemies.add(enemy);
-
-      // Animation configuration would ideally be handled within the Enemy class.
-    }
-  }
-
-  createLightningEffect(x1, y1, x2, y2) {
-    let graphics = this.add.graphics({
-      lineStyle: { width: 2, color: 0xffff00 },
-    });
-
-    // Calculer la direction de l'éclair
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let dist = Math.sqrt(dx * dx + dy * dy);
-    let normX = dx / dist;
-    let normY = dy / dist;
-
-    let currentX = x1;
-    let currentY = y1;
-
-    // Dessiner un zigzag
-    graphics.beginPath();
-    graphics.moveTo(currentX, currentY);
-    let amplitude = 10; // Amplitude du zigzag
-    for (let i = 0; i < dist; i += 10) {
-      currentX += normX * 10;
-      currentY += normY * 10;
-      amplitude = -amplitude;
-      graphics.lineTo(
-        currentX + normY * amplitude,
-        currentY - normX * amplitude
-      );
-    }
-    graphics.lineTo(x2, y2);
-    graphics.strokePath();
-
-    // Supprimer l'éclair après un court délai pour simuler un effet éphémère
-    this.time.delayedCall(100, () => graphics.clear());
-  }
-
-  attackClosestEnemy(closestEnemy) {
-    if (closestEnemy) {
-      // Créer l'effet de slash à la position de l'ennemi
-      let slashEffect = this.add.sprite(
+    // Attaque si l'ennemi est dans la portée et que le cooldown est passé
+    if (
+      closestEnemy &&
+      closestDistance < 100 &&
+      time > this.lastAttackTime + this.attackCooldown
+    ) {
+      this.attackClosestEnemy(closestEnemy);
+      this.createLightningEffect(
+        this.player.x,
+        this.player.y,
         closestEnemy.x,
-        closestEnemy.y,
-        "slashEffect"
+        closestEnemy.y
       );
-
-      // Si vous avez une animation pour l'effet, jouez-la ici
-      // slashEffect.anims.play('slashAnimation');
-
-      // Supprimer l'effet après un court délai
-      this.time.delayedCall(1000, () => {
-        slashEffect.destroy();
-      });
-
-      // Appliquer les conséquences à l'ennemi (par exemple, le détruire)
-      closestEnemy.destroy(); // Ou toute autre logique pour gérer l'ennemi touché
+      this.lastAttackTime = time;
     }
   }
 }
